@@ -146,42 +146,95 @@ func TibiaEventsCalendarImpl(BoxContentHTML string, url string, month int, year 
 				}
 
 				// Skip obvious previous/next month days
-				// In first row: skip days > 25 (previous month)
-				if rowIndex == 0 && day > 25 {
-					cellIndexInRow++
-					return true
+				// In first row: skip days > 7 if we haven't seen day 1 yet (previous month)
+				if rowIndex == 0 && day > 7 {
+					// Look ahead in this row to see if we'll encounter day 1
+					foundDayOne := false
+					for futureIndex := cellIndexInRow; futureIndex < 7; futureIndex++ {
+						futureCell := row.Find("td").Eq(futureIndex)
+						if futureCell.Length() == 0 {
+							break
+						}
+
+						futureDayStr := ""
+						futureFirstDiv := futureCell.Find("div").First()
+						if futureFirstDiv.Length() > 0 {
+							futureFirstDiv.Find("span").Each(func(spanIndex int, span *goquery.Selection) {
+								spanText := strings.TrimSpace(span.Text())
+								dayMatch := regexp.MustCompile(`^(\d{1,2})\s*$`).FindStringSubmatch(spanText)
+								if len(dayMatch) > 1 && futureDayStr == "" {
+									futureDayStr = dayMatch[1]
+								}
+							})
+						}
+
+						if futureDayStr == "" && futureFirstDiv.Length() > 0 {
+							futureText := strings.TrimSpace(futureFirstDiv.Text())
+							if regexp.MustCompile(`^\d{1,2}$`).MatchString(futureText) {
+								futureDayStr = futureText
+							}
+						}
+
+						if futureDayStr != "" {
+							futureDay := TibiaDataStringToInteger(futureDayStr)
+							if futureDay == 1 {
+								foundDayOne = true
+								break
+							}
+						}
+					}
+
+					// If we find day 1 later in this row and current day > 7, this is previous month
+					if foundDayOne {
+						cellIndexInRow++
+						return true
+					}
 				}
 
-				// In last rows: skip days <= 7 that come after days > 20 (next month)
-				if rowIndex >= 4 && day <= 7 && cellIndexInRow > 0 {
-					prevCell := row.Find("td").Eq(cellIndexInRow - 1)
-					prevDayStr := ""
+				// In last rows: skip days <= 15 that come after days > 15 (next month)
+				// This is more aggressive to catch spillover from next month
+				if rowIndex >= 3 && day <= 15 {
+					// Look at previous cells in this row to determine if this is likely next month
+					prevDayFound := false
+					for prevCellIndex := cellIndexInRow - 1; prevCellIndex >= 0; prevCellIndex-- {
+						prevCell := row.Find("td").Eq(prevCellIndex)
+						prevDayStr := ""
 
-					// Try to get previous day using same methods
-					prevFirstDiv := prevCell.Find("div").First()
-					if prevFirstDiv.Length() > 0 {
-						prevFirstDiv.Find("span").Each(func(spanIndex int, span *goquery.Selection) {
-							spanText := strings.TrimSpace(span.Text())
-							dayMatch := regexp.MustCompile(`^(\d{1,2})\s*$`).FindStringSubmatch(spanText)
-							if len(dayMatch) > 1 && prevDayStr == "" {
-								prevDayStr = dayMatch[1]
+						// Try to get previous day using same methods
+						prevFirstDiv := prevCell.Find("div").First()
+						if prevFirstDiv.Length() > 0 {
+							prevFirstDiv.Find("span").Each(func(spanIndex int, span *goquery.Selection) {
+								spanText := strings.TrimSpace(span.Text())
+								dayMatch := regexp.MustCompile(`^(\d{1,2})\s*$`).FindStringSubmatch(spanText)
+								if len(dayMatch) > 1 && prevDayStr == "" {
+									prevDayStr = dayMatch[1]
+								}
+							})
+						}
+
+						if prevDayStr == "" && prevFirstDiv.Length() > 0 {
+							prevDayText := strings.TrimSpace(prevFirstDiv.Text())
+							if regexp.MustCompile(`^\d{1,2}$`).MatchString(prevDayText) {
+								prevDayStr = prevDayText
 							}
-						})
-					}
+						}
 
-					if prevDayStr == "" && prevFirstDiv.Length() > 0 {
-						prevDayText := strings.TrimSpace(prevFirstDiv.Text())
-						if regexp.MustCompile(`^\d{1,2}$`).MatchString(prevDayText) {
-							prevDayStr = prevDayText
+						if prevDayStr != "" {
+							prevDay := TibiaDataStringToInteger(prevDayStr)
+							if prevDay > 15 && day <= 15 {
+								// This looks like next month spillover
+								cellIndexInRow++
+								return true
+							}
+							prevDayFound = true
+							break
 						}
 					}
 
-					if prevDayStr != "" {
-						prevDay := TibiaDataStringToInteger(prevDayStr)
-						if prevDay > 20 && day <= 7 {
-							cellIndexInRow++
-							return true
-						}
+					// Additional check: if we're in a late row and see a low day number, it's likely next month
+					if !prevDayFound && rowIndex >= 4 && day <= 10 {
+						cellIndexInRow++
+						return true
 					}
 				}
 
