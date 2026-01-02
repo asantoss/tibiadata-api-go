@@ -94,6 +94,14 @@ var (
 	// Code: 11008
 	ErrorHighscorePageTooBig = Error{errors.New("the provided page is larger than max amount of pages")}
 
+	// ErrInvalidYear will be sent if the request contains an invalid year
+	// Code: 11009
+	ErrInvalidYear = Error{errors.New("the provided year is invalid")}
+
+	// ErrInvalidMonth will be sent if the request contains an invalid month
+	// Code: 11010
+	ErrInvalidMonth = Error{errors.New("the provided month is invalid")}
+
 	// ErrorCreatureNameEmpty will be sent if the request contains an empty creature name
 	// Code: 12001
 	ErrorCreatureNameEmpty = Error{errors.New("the provided creature name is an empty string")}
@@ -259,6 +267,10 @@ func (e Error) Code() int {
 		return 11007
 	case ErrorHighscorePageTooBig:
 		return 11008
+	case ErrInvalidYear:
+		return 11009
+	case ErrInvalidMonth:
+		return 11010
 	case ErrorCreatureNameEmpty:
 		return 12001
 	case ErrorCreatureNameTooSmall:

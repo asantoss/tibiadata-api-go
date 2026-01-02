@@ -168,6 +168,10 @@ func runWebServer() {
 		v4.GET("/creature/:race", tibiaCreaturesCreature)
 		v4.GET("/creatures", tibiaCreaturesOverview)
 
+		// Tibia events calendar
+		v4.GET("/events", tibiaEventsCalendar)
+		v4.GET("/events/:year/:month", tibiaEventsCalendar)
+
 		// Tibia fansites
 		v4.GET("/fansites", tibiaFansites)
 
@@ -1082,6 +1086,62 @@ func tibiaWorldsWorld(c *gin.Context) {
 			return TibiaWorldsWorldImpl(world, BoxContentHTML, tibiadataRequest.URL)
 		},
 		"TibiaWorldsWorld")
+}
+
+// tibiaEventsCalendar - Handler for event calendar endpoint
+// @Summary      Show event calendar
+// @Description  Show the event calendar for a specific month/year or current month
+// @Tags         Events
+// @Accept       json
+// @Produce      json
+// @Param        year   path      string  false  "Year (e.g., 2026)"
+// @Param        month  path      string  false  "Month (1-12)"
+// @Success      200  {object}  EventsCalendarResponse
+// @Failure      400  {object}  Information
+// @Failure      404  {object}  Information
+// @Failure      503  {object}  Information
+// @Router       /v4/events [get]
+// @Router       /v4/events/{year}/{month} [get]
+func tibiaEventsCalendar(c *gin.Context) {
+	// Get optional year and month parameters
+	yearStr := c.Param("year")
+	monthStr := c.Param("month")
+
+	// Build URL with parameters if provided
+	url := "https://www.tibia.com/news/?subtopic=eventcalendar"
+
+	var monthInt, yearInt int
+
+	if yearStr != "" && monthStr != "" {
+		// Validate year
+		yearInt = TibiaDataStringToInteger(yearStr)
+		if yearInt < 2020 || yearInt > 2030 {
+			TibiaDataErrorHandler(c, validation.ErrInvalidYear, http.StatusBadRequest)
+			return
+		}
+
+		// Validate month
+		monthInt = TibiaDataStringToInteger(monthStr)
+		if monthInt < 1 || monthInt > 12 {
+			TibiaDataErrorHandler(c, validation.ErrInvalidMonth, http.StatusBadRequest)
+			return
+		}
+
+		url += "&calendarmonth=" + monthStr + "&calendaryear=" + yearStr
+	}
+
+	tibiadataRequest := TibiaDataRequestStruct{
+		Method: resty.MethodGet,
+		URL:    url,
+	}
+
+	tibiaDataRequestHandler(
+		c,
+		tibiadataRequest,
+		func(BoxContentHTML string) (interface{}, error) {
+			return TibiaEventsCalendarImpl(BoxContentHTML, tibiadataRequest.URL, monthInt, yearInt)
+		},
+		"TibiaEventsCalendar")
 }
 
 func TibiaDataErrorHandler(c *gin.Context, err error, httpCode int) {
