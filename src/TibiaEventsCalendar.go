@@ -79,8 +79,12 @@ func TibiaEventsCalendarImpl(BoxContentHTML string, url string, month int, year 
 	// Key: event name, Value: map of days (as integers)
 	eventDays := make(map[string]map[int]bool)
 
-	// Find the calendar table
-	ReaderHTML.Find("table.Table3").EachWithBreak(func(tableIndex int, table *goquery.Selection) bool {
+	// Find the calendar table - try multiple selectors
+	ReaderHTML.Find("table.Table3, table").EachWithBreak(func(tableIndex int, table *goquery.Selection) bool {
+		// Skip if this table doesn't contain calendar cells
+		if table.Find("td").Length() < 7 {
+			return true // Continue looking for other tables
+		}
 		// Track row index to help identify if we're in the first or last week
 		rowIndex := 0
 
@@ -90,16 +94,42 @@ func TibiaEventsCalendarImpl(BoxContentHTML string, url string, month int, year 
 
 			row.Find("td").EachWithBreak(func(cellIndex int, cell *goquery.Selection) bool {
 
-				// Extract day number from direct text nodes only (not from child elements)
+				// Extract day number from real Tibia.com structure or fallback methods
 				dayStr := ""
-				cell.Contents().Each(func(i int, s *goquery.Selection) {
-					if goquery.NodeName(s) == "#text" {
-						text := strings.TrimSpace(s.Text())
-						if text != "" && dayStr == "" { // Take the first non-empty text node
-							dayStr = text
+
+				// Method 1: Real Tibia structure - day number is in first span inside first div
+				firstDiv := cell.Find("div").First()
+				if firstDiv.Length() > 0 {
+					// Look for span with day number inside the first div
+					firstDiv.Find("span").Each(func(spanIndex int, span *goquery.Selection) {
+						spanText := strings.TrimSpace(span.Text())
+						// Check if this span contains just a day number (possibly with trailing space)
+						dayMatch := regexp.MustCompile(`^(\d{1,2})\s*$`).FindStringSubmatch(spanText)
+						if len(dayMatch) > 1 && dayStr == "" {
+							dayStr = dayMatch[1]
 						}
+					})
+				}
+
+				// Method 2: Test structure - day number is directly in first div
+				if dayStr == "" && firstDiv.Length() > 0 {
+					dayText := strings.TrimSpace(firstDiv.Text())
+					if regexp.MustCompile(`^\d{1,2}$`).MatchString(dayText) {
+						dayStr = dayText
 					}
-				})
+				}
+
+				// Method 3: Legacy fallback - day number as direct text node
+				if dayStr == "" {
+					cell.Contents().Each(func(i int, s *goquery.Selection) {
+						if goquery.NodeName(s) == "#text" {
+							text := strings.TrimSpace(s.Text())
+							if text != "" && dayStr == "" && regexp.MustCompile(`^\d{1,2}$`).MatchString(text) {
+								dayStr = text
+							}
+						}
+					})
+				}
 
 				// Skip if no day number found
 				if dayStr == "" {
@@ -126,14 +156,26 @@ func TibiaEventsCalendarImpl(BoxContentHTML string, url string, month int, year 
 				if rowIndex >= 4 && day <= 7 && cellIndexInRow > 0 {
 					prevCell := row.Find("td").Eq(cellIndexInRow - 1)
 					prevDayStr := ""
-					prevCell.Contents().Each(func(i int, s *goquery.Selection) {
-						if goquery.NodeName(s) == "#text" {
-							text := strings.TrimSpace(s.Text())
-							if text != "" && prevDayStr == "" {
-								prevDayStr = text
+
+					// Try to get previous day using same methods
+					prevFirstDiv := prevCell.Find("div").First()
+					if prevFirstDiv.Length() > 0 {
+						prevFirstDiv.Find("span").Each(func(spanIndex int, span *goquery.Selection) {
+							spanText := strings.TrimSpace(span.Text())
+							dayMatch := regexp.MustCompile(`^(\d{1,2})\s*$`).FindStringSubmatch(spanText)
+							if len(dayMatch) > 1 && prevDayStr == "" {
+								prevDayStr = dayMatch[1]
 							}
+						})
+					}
+
+					if prevDayStr == "" && prevFirstDiv.Length() > 0 {
+						prevDayText := strings.TrimSpace(prevFirstDiv.Text())
+						if regexp.MustCompile(`^\d{1,2}$`).MatchString(prevDayText) {
+							prevDayStr = prevDayText
 						}
-					})
+					}
+
 					if prevDayStr != "" {
 						prevDay := TibiaDataStringToInteger(prevDayStr)
 						if prevDay > 20 && day <= 7 {
@@ -143,16 +185,59 @@ func TibiaEventsCalendarImpl(BoxContentHTML string, url string, month int, year 
 					}
 				}
 
-				// Look for events in this cell
-				cell.Find("div").Each(func(divIndex int, div *goquery.Selection) {
-					eventText := strings.TrimSpace(div.Text())
+				// Look for events in this cell using real Tibia structure
+				// Real structure: span contains div with event name
+				cell.Find("span div").Each(func(index int, eventDiv *goquery.Selection) {
+					eventText := strings.TrimSpace(eventDiv.Text())
 
-					// Skip if empty or just a number
-					if eventText == "" || regexp.MustCompile(`^\d{1,2}$`).MatchString(eventText) {
+					// Skip if empty
+					if eventText == "" {
+						return
+					}
+
+					// Skip if it's just a day number
+					if regexp.MustCompile(`^\d{1,2}$`).MatchString(eventText) {
+						return
+					}
+
+					// Clean up event text (remove asterisks that indicate start/end times)
+					eventText = strings.TrimPrefix(eventText, "*")
+					eventText = strings.TrimSpace(eventText)
+
+					if eventText == "" {
 						return
 					}
 
 					// Track this day for this event
+					if _, exists := eventDays[eventText]; !exists {
+						eventDays[eventText] = make(map[int]bool)
+					}
+					eventDays[eventText][day] = true
+				})
+
+				// Fallback for test structure - check div elements directly
+				cell.Find("div").Each(func(index int, element *goquery.Selection) {
+					eventText := strings.TrimSpace(element.Text())
+
+					// Skip if empty or just a number (day number)
+					if eventText == "" || regexp.MustCompile(`^\d{1,2}$`).MatchString(eventText) {
+						return
+					}
+
+					// Skip if it contains only the day number
+					if eventText == dayStr {
+						return
+					}
+
+					// Clean up event text (remove asterisks that indicate start/end times)
+					eventText = strings.TrimPrefix(eventText, "*")
+					eventText = strings.TrimSpace(eventText)
+
+					if eventText == "" {
+						return
+					}
+
+					// Only add if we haven't already found this event from span div structure
 					if _, exists := eventDays[eventText]; !exists {
 						eventDays[eventText] = make(map[int]bool)
 					}

@@ -79,3 +79,99 @@ func TestEventsCalendarWithMonthYear(t *testing.T) {
 	assert.Equal(3, eventsJson.Month, "Month should be March (3)")
 	assert.Equal(2026, eventsJson.Year, "Year should be 2026")
 }
+
+func TestRealStructure(t *testing.T) {
+	file, err := static.TestFiles.Open("testdata/events/real_structure.html")
+	if err != nil {
+		t.Fatalf("file opening error: %s", err)
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		t.Fatalf("File reading error: %s", err)
+	}
+
+	eventsJson, err := TibiaEventsCalendarImpl(string(data), "https://www.tibia.com/news/?subtopic=eventcalendar&calendarmonth=2&calendaryear=2026", 2, 2026)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assert := assert.New(t)
+	information := eventsJson.Information
+
+	assert.Equal("https://www.tibia.com/news/?subtopic=eventcalendar&calendarmonth=2&calendaryear=2026", information.TibiaURLs[0])
+
+	// Debug: Print the events found
+	t.Logf("Found %d events:", len(eventsJson.Events))
+	for i, event := range eventsJson.Events {
+		t.Logf("Event %d: %s (%s to %s, %d days)", i+1, event.Name, event.StartDate, event.EndDate, event.Duration)
+	}
+
+	// Check that we have events
+	assert.Greater(len(eventsJson.Events), 0, "Should have at least one event")
+
+	// Check month and year are set correctly
+	assert.Equal(2, eventsJson.Month, "Month should be February (2)")
+	assert.Equal(2026, eventsJson.Year, "Year should be 2026")
+
+	// Check for expected events
+	eventNames := make(map[string]bool)
+	for _, event := range eventsJson.Events {
+		eventNames[event.Name] = true
+	}
+
+	// Should contain these events from the real structure
+	expectedEvents := []string{"The First Dragon", "Full Moon", "Valentine's Day", "Last Creep Standing", "A Piece of Cake"}
+	for _, expected := range expectedEvents {
+		assert.True(eventNames[expected], "Should contain event: %s", expected)
+	}
+}
+
+func TestRealTibiaStructure(t *testing.T) {
+	file, err := static.TestFiles.Open("testdata/events/real_tibia_structure.html")
+	if err != nil {
+		t.Fatalf("file opening error: %s", err)
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		t.Fatalf("File reading error: %s", err)
+	}
+
+	eventsJson, err := TibiaEventsCalendarImpl(string(data), "https://www.tibia.com/news/?subtopic=eventcalendar&calendarmonth=2&calendaryear=2026", 2, 2026)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assert := assert.New(t)
+	information := eventsJson.Information
+
+	assert.Equal("https://www.tibia.com/news/?subtopic=eventcalendar&calendarmonth=2&calendaryear=2026", information.TibiaURLs[0])
+
+	// Debug: Print the events found
+	t.Logf("Found %d events:", len(eventsJson.Events))
+	for i, event := range eventsJson.Events {
+		t.Logf("Event %d: %s (%s to %s, %d days)", i+1, event.Name, event.StartDate, event.EndDate, event.Duration)
+	}
+
+	// Check that we have events
+	assert.Greater(len(eventsJson.Events), 0, "Should have at least one event")
+
+	// Check month and year are set correctly
+	assert.Equal(2, eventsJson.Month, "Month should be February (2)")
+	assert.Equal(2026, eventsJson.Year, "Year should be 2026")
+
+	// Check for expected events from the real Tibia structure
+	eventNames := make(map[string]bool)
+	for _, event := range eventsJson.Events {
+		eventNames[event.Name] = true
+	}
+
+	// Should contain these events from the real Tibia structure
+	expectedEvents := []string{"The First Dragon", "Full Moon", "Valentine's Day", "Last Creep Standing", "A Piece of Cake"}
+	for _, expected := range expectedEvents {
+		assert.True(eventNames[expected], "Should contain event: %s", expected)
+	}
+}
