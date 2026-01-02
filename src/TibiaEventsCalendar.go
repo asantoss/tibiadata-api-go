@@ -75,71 +75,133 @@ func TibiaEventsCalendarImpl(BoxContentHTML string, url string, month int, year 
 		calendarYear = year
 	}
 
-	// Map to track unique events
-	eventMap := make(map[string]*Event)
+	// Map to track events with their days
+	// Key: event name, Value: map of days (as integers)
+	eventDays := make(map[string]map[int]bool)
 
 	// Find the calendar table
 	ReaderHTML.Find("table.Table3").EachWithBreak(func(tableIndex int, table *goquery.Selection) bool {
-		// Look for calendar cells with events
-		table.Find("td").EachWithBreak(func(cellIndex int, cell *goquery.Selection) bool {
-			cellText := strings.TrimSpace(cell.Text())
+		// Track row index to help identify if we're in the first or last week
+		rowIndex := 0
 
-			// Skip empty cells or cells with just day numbers
-			if cellText == "" || regexp.MustCompile(`^\d{1,2}$`).MatchString(cellText) {
-				return true
-			}
+		table.Find("tr").EachWithBreak(func(trIndex int, row *goquery.Selection) bool {
+			// Track cell index within the row
+			cellIndexInRow := 0
 
-			// Check if cell contains an event (has a div with event class or special formatting)
-			cell.Find("div").Each(func(divIndex int, div *goquery.Selection) {
-				eventText := strings.TrimSpace(div.Text())
+			row.Find("td").EachWithBreak(func(cellIndex int, cell *goquery.Selection) bool {
 
-				// Skip if it's just a day number
-				if eventText == "" || regexp.MustCompile(`^\d{1,2}$`).MatchString(eventText) {
-					return
+				// Extract day number - it's typically the first text node
+				dayStr := ""
+				cellTextParts := strings.Fields(cell.Text())
+				if len(cellTextParts) > 0 {
+					// Check if first part is a number
+					if regexp.MustCompile(`^\d{1,2}$`).MatchString(cellTextParts[0]) {
+						dayStr = cellTextParts[0]
+					}
 				}
 
-				// Extract the day number from the cell
-				dayStr := ""
-				cell.Contents().Each(func(i int, s *goquery.Selection) {
-					text := strings.TrimSpace(s.Text())
-					if regexp.MustCompile(`^\d{1,2}$`).MatchString(text) {
-						dayStr = text
+				// Skip if no day number found
+				if dayStr == "" {
+					cellIndexInRow++
+					return true
+				}
+
+				day := TibiaDataStringToInteger(dayStr)
+
+				// Skip days from previous month (typically > 20) in the first week
+				// or days from next month (typically < 10) in the last weeks
+				if rowIndex == 0 && day > 20 {
+					// This is a day from the previous month
+					cellIndexInRow++
+					return true
+				}
+
+				// In the last row, skip days that appear to be from next month
+				if rowIndex >= 4 && day <= 7 {
+					// Check if we have already seen a day > 20 in this row or previous cells
+					hasHighDay := false
+					row.Find("td").EachWithBreak(func(checkIndex int, checkCell *goquery.Selection) bool {
+						if checkIndex >= cellIndexInRow {
+							return false // Stop checking, we're at current cell or beyond
+						}
+						checkTextParts := strings.Fields(checkCell.Text())
+						if len(checkTextParts) > 0 {
+							checkDay := TibiaDataStringToInteger(checkTextParts[0])
+							if checkDay > 20 {
+								hasHighDay = true
+								return false // Found high day, stop
+							}
+						}
+						return true
+					})
+
+					if hasHighDay {
+						// We've seen high days (20+) and now see low days (1-7), this is next month
+						cellIndexInRow++
+						return true
+					}
+				}
+
+				// Look for events in this cell
+				cell.Find("div").Each(func(divIndex int, div *goquery.Selection) {
+					eventText := strings.TrimSpace(div.Text())
+
+					// Skip if empty or just a number
+					if eventText == "" || regexp.MustCompile(`^\d{1,2}$`).MatchString(eventText) {
 						return
 					}
+
+					// Track this day for this event
+					if _, exists := eventDays[eventText]; !exists {
+						eventDays[eventText] = make(map[int]bool)
+					}
+					eventDays[eventText][day] = true
 				})
 
-				// If we found an event name and have a day
-				if eventText != "" && dayStr != "" {
-					day := TibiaDataStringToInteger(dayStr)
-					if day > 0 {
-						// Create or update event
-						if existingEvent, exists := eventMap[eventText]; exists {
-							// Update end date if this day is later
-							endDay := TibiaDataStringToInteger(strings.Split(existingEvent.EndDate, "-")[2])
-							if day > endDay {
-								existingEvent.EndDate = fmt.Sprintf("%04d-%02d-%02d", calendarYear, calendarMonth, day)
-							}
-						} else {
-							// Create new event
-							event := Event{
-								Name:      eventText,
-								StartDate: fmt.Sprintf("%04d-%02d-%02d", calendarYear, calendarMonth, day),
-								EndDate:   fmt.Sprintf("%04d-%02d-%02d", calendarYear, calendarMonth, day),
-							}
-							eventMap[eventText] = &event
-						}
-					}
-				}
+				cellIndexInRow++
+				return true
 			})
 
+			rowIndex++
 			return true
 		})
 
 		return true
 	})
 
+	// Convert eventDays map to Event structs with proper date ranges
+	for eventName, days := range eventDays {
+		if len(days) == 0 {
+			continue
+		}
+
+		// Find min and max days for this event
+		minDay := 32
+		maxDay := 0
+		for day := range days {
+			if day < minDay {
+				minDay = day
+			}
+			if day > maxDay {
+				maxDay = day
+			}
+		}
+
+		// Create event with proper date range
+		event := Event{
+			Name:      eventName,
+			StartDate: fmt.Sprintf("%04d-%02d-%02d", calendarYear, calendarMonth, minDay),
+			EndDate:   fmt.Sprintf("%04d-%02d-%02d", calendarYear, calendarMonth, maxDay),
+		}
+
+		// Calculate duration
+		event.Duration = maxDay - minDay + 1
+
+		EventsData = append(EventsData, event)
+	}
+
 	// Alternative parsing method - look for event list if calendar table parsing didn't work
-	if len(eventMap) == 0 {
+	if len(EventsData) == 0 {
 		// Look for events in different format (list view or special event containers)
 		ReaderHTML.Find(".InnerTableContainer").Each(func(index int, container *goquery.Selection) {
 			container.Find("tr").Each(func(rowIndex int, row *goquery.Selection) {
@@ -158,30 +220,15 @@ func TibiaEventsCalendarImpl(BoxContentHTML string, url string, month int, year 
 							event := Event{
 								Name:      eventName,
 								StartDate: fmt.Sprintf("%04d-%02d-01", calendarYear, calendarMonth),
-								EndDate:   fmt.Sprintf("%04d-%02d-01", calendarYear, calendarMonth),
+								EndDate:   fmt.Sprintf("%04d-%02d-15", calendarYear, calendarMonth),
+								Duration:  15,
 							}
-							eventMap[eventName] = &event
+							EventsData = append(EventsData, event)
 						}
 					}
 				}
 			})
 		})
-	}
-
-	// Convert map to slice and calculate durations
-	for _, event := range eventMap {
-		// Calculate duration
-		startTime, err1 := time.Parse("2006-01-02", event.StartDate)
-		endTime, err2 := time.Parse("2006-01-02", event.EndDate)
-
-		if err1 == nil && err2 == nil {
-			duration := endTime.Sub(startTime)
-			event.Duration = int(duration.Hours()/24) + 1 // +1 because we include both start and end days
-		} else {
-			event.Duration = 1 // Default to 1 day if parsing fails
-		}
-
-		EventsData = append(EventsData, *event)
 	}
 
 	if insideError != nil {

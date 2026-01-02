@@ -30,6 +30,12 @@ func TestEventsCalendar(t *testing.T) {
 
 	assert.Equal("https://www.tibia.com/news/?subtopic=eventcalendar", information.TibiaURLs[0])
 
+	// Debug: Print the events found
+	t.Logf("Found %d events:", len(eventsJson.Events))
+	for i, event := range eventsJson.Events {
+		t.Logf("Event %d: %s (%s to %s, %d days)", i+1, event.Name, event.StartDate, event.EndDate, event.Duration)
+	}
+
 	// Check that we have events
 	assert.Greater(len(eventsJson.Events), 0, "Should have at least one event")
 
