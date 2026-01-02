@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -29,7 +30,64 @@ type EventsCalendarResponse struct {
 var (
 	// Regex patterns for parsing event information
 	eventDateRegex = regexp.MustCompile(`(\d{1,2})(?:-(\d{1,2}))?`)
+
+	// Known recurring events with their fixed date ranges
+	knownEvents = map[string]struct {
+		StartMonth int
+		StartDay   int
+		EndMonth   int
+		EndDay     int
+	}{
+		"Winterlight Solstice": {12, 22, 1, 10},
+		"Halloween":            {10, 31, 11, 3},
+		"The First Dragon":     {1, 14, 2, 12},
+		"A Piece of Cake":      {2, 21, 2, 26},
+		"Orcsoberfest":         {3, 13, 3, 20},
+		"Full Moon":            {0, 12, 0, 15}, // Special case: every month
+		"Spring Into Life":     {4, 16, 4, 23},
+		"Demon's Lullaby":      {5, 7, 5, 14},
+		"Betwitched":           {6, 21, 6, 25},
+		"Rise Of Devovorga":    {9, 1, 9, 7},
+		"Orcsobertfest":        {10, 9, 10, 16}, // Note: different from March one
+		"Lightbearer":          {11, 11, 11, 15},
+	}
 )
+
+// getEventDates returns the correct start and end dates for a known event
+func getEventDates(eventName string, currentMonth, currentYear int) (startDate, endDate string, isKnown bool) {
+	knownEvent, exists := knownEvents[eventName]
+	if !exists {
+		return "", "", false
+	}
+
+	startMonth := knownEvent.StartMonth
+	endMonth := knownEvent.EndMonth
+
+	// Special case for Full Moon - use current month
+	if startMonth == 0 {
+		startMonth = currentMonth
+		endMonth = currentMonth
+	}
+
+	startYear := currentYear
+	endYear := currentYear
+
+	// Handle cross-year events (like Winterlight Solstice Dec -> Jan)
+	if startMonth > endMonth {
+		// If we're looking at January and the event spans Dec->Jan
+		if currentMonth == 1 || currentMonth == endMonth {
+			startYear = currentYear - 1
+		}
+		// If we're looking at December and the event spans Dec->Jan
+		if currentMonth == 12 || currentMonth == startMonth {
+			endYear = currentYear + 1
+		}
+	}
+
+	return fmt.Sprintf("%04d-%02d-%02dT08:00:00Z", startYear, startMonth, knownEvent.StartDay),
+		   fmt.Sprintf("%04d-%02d-%02dT08:00:00Z", endYear, endMonth, knownEvent.EndDay),
+		   true
+}
 
 // TibiaEventsCalendarImpl parses the event calendar HTML and returns structured data
 func TibiaEventsCalendarImpl(BoxContentHTML string, url string, month int, year int) (EventsCalendarResponse, error) {
@@ -317,29 +375,46 @@ func TibiaEventsCalendarImpl(BoxContentHTML string, url string, month int, year 
 			continue
 		}
 
-		// Find min and max days for this event
-		minDay := 32
-		maxDay := 0
-		for day := range days {
-			if day < minDay {
-				minDay = day
+		// Check if this is a known event with predefined dates
+		if startDate, endDate, isKnown := getEventDates(eventName, calendarMonth, calendarYear); isKnown {
+			// Use predefined dates for known recurring events
+			event := Event{
+				Name:      eventName,
+				StartDate: startDate,
+				EndDate:   endDate,
 			}
-			if day > maxDay {
-				maxDay = day
+
+			// Calculate duration from the date strings
+			startTime, _ := time.Parse("2006-01-02T15:04:05Z", startDate)
+			endTime, _ := time.Parse("2006-01-02T15:04:05Z", endDate)
+			event.Duration = int(endTime.Sub(startTime).Hours()/24) + 1
+
+			EventsData = append(EventsData, event)
+		} else {
+			// Fall back to calendar-based parsing for unknown events
+			minDay := 32
+			maxDay := 0
+			for day := range days {
+				if day < minDay {
+					minDay = day
+				}
+				if day > maxDay {
+					maxDay = day
+				}
 			}
+
+			// Create event with proper date range including 10am CEST (8am UTC) timestamp
+			event := Event{
+				Name:      eventName,
+				StartDate: fmt.Sprintf("%04d-%02d-%02dT08:00:00Z", calendarYear, calendarMonth, minDay),
+				EndDate:   fmt.Sprintf("%04d-%02d-%02dT08:00:00Z", calendarYear, calendarMonth, maxDay),
+			}
+
+			// Calculate duration
+			event.Duration = maxDay - minDay + 1
+
+			EventsData = append(EventsData, event)
 		}
-
-		// Create event with proper date range
-		event := Event{
-			Name:      eventName,
-			StartDate: fmt.Sprintf("%04d-%02d-%02d", calendarYear, calendarMonth, minDay),
-			EndDate:   fmt.Sprintf("%04d-%02d-%02d", calendarYear, calendarMonth, maxDay),
-		}
-
-		// Calculate duration
-		event.Duration = maxDay - minDay + 1
-
-		EventsData = append(EventsData, event)
 	}
 
 	// Alternative parsing method - look for event list if calendar table parsing didn't work
@@ -361,8 +436,8 @@ func TibiaEventsCalendarImpl(BoxContentHTML string, url string, month int, year 
 						if eventName != "" && datePart != "" {
 							event := Event{
 								Name:      eventName,
-								StartDate: fmt.Sprintf("%04d-%02d-01", calendarYear, calendarMonth),
-								EndDate:   fmt.Sprintf("%04d-%02d-15", calendarYear, calendarMonth),
+								StartDate: fmt.Sprintf("%04d-%02d-01T08:00:00Z", calendarYear, calendarMonth),
+								EndDate:   fmt.Sprintf("%04d-%02d-15T08:00:00Z", calendarYear, calendarMonth),
 								Duration:  15,
 							}
 							EventsData = append(EventsData, event)
@@ -376,6 +451,11 @@ func TibiaEventsCalendarImpl(BoxContentHTML string, url string, month int, year 
 	if insideError != nil {
 		return EventsCalendarResponse{}, insideError
 	}
+
+	// Sort events by start date
+	sort.Slice(EventsData, func(i, j int) bool {
+		return EventsData[i].StartDate < EventsData[j].StartDate
+	})
 
 	// Build the response
 	return EventsCalendarResponse{
