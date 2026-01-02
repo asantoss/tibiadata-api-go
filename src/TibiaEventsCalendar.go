@@ -146,8 +146,8 @@ func TibiaEventsCalendarImpl(BoxContentHTML string, url string, month int, year 
 				}
 
 				// Skip obvious previous/next month days
-				// First, check if this is the first row and if day 1 exists later in this row
-				if rowIndex == 0 {
+				// Check if day 1 exists later in this row (applies to any row that might have month boundary)
+				if true {
 					// Look ahead in this row to see if we'll encounter day 1
 					foundDayOne := false
 					dayOnePosition := -1
