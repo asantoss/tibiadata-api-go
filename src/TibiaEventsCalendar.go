@@ -146,11 +146,13 @@ func TibiaEventsCalendarImpl(BoxContentHTML string, url string, month int, year 
 				}
 
 				// Skip obvious previous/next month days
-				// In first row: skip days > 7 if we haven't seen day 1 yet (previous month)
-				if rowIndex == 0 && day > 7 {
+				// First, check if this is the first row and if day 1 exists later in this row
+				if rowIndex == 0 {
 					// Look ahead in this row to see if we'll encounter day 1
 					foundDayOne := false
-					for futureIndex := cellIndexInRow; futureIndex < 7; futureIndex++ {
+					dayOnePosition := -1
+
+					for futureIndex := 0; futureIndex < 7; futureIndex++ {
 						futureCell := row.Find("td").Eq(futureIndex)
 						if futureCell.Length() == 0 {
 							break
@@ -179,13 +181,14 @@ func TibiaEventsCalendarImpl(BoxContentHTML string, url string, month int, year 
 							futureDay := TibiaDataStringToInteger(futureDayStr)
 							if futureDay == 1 {
 								foundDayOne = true
+								dayOnePosition = futureIndex
 								break
 							}
 						}
 					}
 
-					// If we find day 1 later in this row and current day > 7, this is previous month
-					if foundDayOne {
+					// If we found day 1 in this row, skip all cells before it (they're previous month)
+					if foundDayOne && cellIndexInRow < dayOnePosition {
 						cellIndexInRow++
 						return true
 					}
