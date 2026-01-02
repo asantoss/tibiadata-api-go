@@ -90,15 +90,16 @@ func TibiaEventsCalendarImpl(BoxContentHTML string, url string, month int, year 
 
 			row.Find("td").EachWithBreak(func(cellIndex int, cell *goquery.Selection) bool {
 
-				// Extract day number - it's typically the first text node
+				// Extract day number from direct text nodes only (not from child elements)
 				dayStr := ""
-				cellTextParts := strings.Fields(cell.Text())
-				if len(cellTextParts) > 0 {
-					// Check if first part is a number
-					if regexp.MustCompile(`^\d{1,2}$`).MatchString(cellTextParts[0]) {
-						dayStr = cellTextParts[0]
+				cell.Contents().Each(func(i int, s *goquery.Selection) {
+					if goquery.NodeName(s) == "#text" {
+						text := strings.TrimSpace(s.Text())
+						if text != "" && dayStr == "" { // Take the first non-empty text node
+							dayStr = text
+						}
 					}
-				}
+				})
 
 				// Skip if no day number found
 				if dayStr == "" {
@@ -108,37 +109,37 @@ func TibiaEventsCalendarImpl(BoxContentHTML string, url string, month int, year 
 
 				day := TibiaDataStringToInteger(dayStr)
 
-				// Skip days from previous month (typically > 20) in the first week
-				// or days from next month (typically < 10) in the last weeks
-				if rowIndex == 0 && day > 20 {
-					// This is a day from the previous month
+				// Skip invalid days
+				if day <= 0 || day > 31 {
 					cellIndexInRow++
 					return true
 				}
 
-				// In the last row, skip days that appear to be from next month
-				if rowIndex >= 4 && day <= 7 {
-					// Check if we have already seen a day > 20 in this row or previous cells
-					hasHighDay := false
-					row.Find("td").EachWithBreak(func(checkIndex int, checkCell *goquery.Selection) bool {
-						if checkIndex >= cellIndexInRow {
-							return false // Stop checking, we're at current cell or beyond
-						}
-						checkTextParts := strings.Fields(checkCell.Text())
-						if len(checkTextParts) > 0 {
-							checkDay := TibiaDataStringToInteger(checkTextParts[0])
-							if checkDay > 20 {
-								hasHighDay = true
-								return false // Found high day, stop
+				// Skip obvious previous/next month days
+				// In first row: skip days > 25 (previous month)
+				if rowIndex == 0 && day > 25 {
+					cellIndexInRow++
+					return true
+				}
+
+				// In last rows: skip days <= 7 that come after days > 20 (next month)
+				if rowIndex >= 4 && day <= 7 && cellIndexInRow > 0 {
+					prevCell := row.Find("td").Eq(cellIndexInRow - 1)
+					prevDayStr := ""
+					prevCell.Contents().Each(func(i int, s *goquery.Selection) {
+						if goquery.NodeName(s) == "#text" {
+							text := strings.TrimSpace(s.Text())
+							if text != "" && prevDayStr == "" {
+								prevDayStr = text
 							}
 						}
-						return true
 					})
-
-					if hasHighDay {
-						// We've seen high days (20+) and now see low days (1-7), this is next month
-						cellIndexInRow++
-						return true
+					if prevDayStr != "" {
+						prevDay := TibiaDataStringToInteger(prevDayStr)
+						if prevDay > 20 && day <= 7 {
+							cellIndexInRow++
+							return true
+						}
 					}
 				}
 
